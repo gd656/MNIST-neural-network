@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from PIL import Image, ImageOps
 import numpy as np
@@ -6,14 +6,34 @@ import numpy as np
 from neural_network import network
 
 
-app = Flask(__name__)
+# =========================================================
+# Flask 配置
+# =========================================================
+
+app = Flask(
+    __name__,
+    static_folder="dist",
+    static_url_path=""
+)
+
 CORS(app)
 
 
-@app.route("/")
-def index():
-    return "MNIST 识别后端运行成功！"
+# =========================================================
+# React 前端页面
+# =========================================================
 
+@app.route("/")
+def home():
+    return send_from_directory(
+        app.static_folder,
+        "index.html"
+    )
+
+
+# =========================================================
+# 图片预处理
+# =========================================================
 
 def preprocess_image(image):
     """
@@ -51,7 +71,9 @@ def preprocess_image(image):
     cols = np.where(mask.any(axis=0))[0]
 
     if len(rows) == 0 or len(cols) == 0:
-        raise ValueError("没有检测到有效的数字，请重新上传图片")
+        raise ValueError(
+            "没有检测到有效的数字，请重新上传图片"
+        )
 
     top = rows[0]
     bottom = rows[-1] + 1
@@ -68,8 +90,15 @@ def preprocess_image(image):
     # 6. 缩放到 20×20 范围
     scale = 20 / max(width, height)
 
-    new_width = max(1, int(width * scale))
-    new_height = max(1, int(height * scale))
+    new_width = max(
+        1,
+        int(width * scale)
+    )
+
+    new_height = max(
+        1,
+        int(height * scale)
+    )
 
     image = image.resize(
         (new_width, new_height),
@@ -86,7 +115,7 @@ def preprocess_image(image):
         0
     )
 
-    # 9. 先放到几何中心
+    # 9. 放到几何中心
     paste_x = (28 - new_width) // 2
     paste_y = (28 - new_height) // 2
 
@@ -95,9 +124,9 @@ def preprocess_image(image):
         (paste_x, paste_y)
     )
 
-    # ==================================================
+    # =====================================================
     # 10. 根据像素重心重新调整数字位置
-    # ==================================================
+    # =====================================================
 
     canvas_array = np.asarray(
         canvas,
@@ -122,7 +151,7 @@ def preprocess_image(image):
             / total
         )
 
-        # MNIST 中心大约在 13.5, 13.5
+        # MNIST 中心大约为 13.5, 13.5
         target_x = 13.5
         target_y = 13.5
 
@@ -134,7 +163,7 @@ def preprocess_image(image):
             target_y - center_y
         ))
 
-        # 使用新的画布进行平移
+        # 创建新的画布进行平移
         shifted = np.zeros(
             (28, 28),
             dtype=np.uint8
@@ -154,15 +183,17 @@ def preprocess_image(image):
                     shifted[
                         new_y,
                         new_x
-                    ] = int(canvas_array[y, x])
+                    ] = int(
+                        canvas_array[y, x]
+                    )
 
         canvas = Image.fromarray(
             shifted
         )
 
-    # ==================================================
+    # =====================================================
     # 11. 最后重新拉伸亮度
-    # ==================================================
+    # =====================================================
 
     canvas_array = np.asarray(
         canvas,
@@ -184,14 +215,22 @@ def preprocess_image(image):
     return canvas
 
 
-@app.route("/api/predict", methods=["POST"])
+# =========================================================
+# MNIST 数字识别 API
+# =========================================================
+
+@app.route(
+    "/api/predict",
+    methods=["POST"]
+)
 def predict():
 
     try:
 
-        # ==============================
+        # ---------------------------------------------
         # 1. 检查图片
-        # ==============================
+        # ---------------------------------------------
+
         if "image" not in request.files:
 
             return jsonify({
@@ -208,50 +247,59 @@ def predict():
                 "message": "没有选择图片"
             }), 400
 
-        # ==============================
+        # ---------------------------------------------
         # 2. 打开图片
-        # ==============================
+        # ---------------------------------------------
+
         image = Image.open(
             file.stream
         )
 
-        # ==============================
-        # 3. 预处理
-        # ==============================
-        image = preprocess_image(image)
+        # ---------------------------------------------
+        # 3. 图片预处理
+        # ---------------------------------------------
 
+        image = preprocess_image(
+            image
+        )
 
-
-        # ==============================
+        # ---------------------------------------------
         # 4. 转换为 NumPy
-        # ==============================
+        # ---------------------------------------------
+
         image_array = np.asarray(
             image,
             dtype=np.float64
         )
 
-        # ==============================
-        # 5. 784 个输入节点
-        # ==============================
-        inputs = image_array.reshape(784)
+        # ---------------------------------------------
+        # 5. 转换为 784 个输入节点
+        # ---------------------------------------------
 
-        # ==============================
-        # 6. MNIST 输入范围
-        # ==============================
+        inputs = image_array.reshape(
+            784
+        )
+
+        # ---------------------------------------------
+        # 6. 转换为 MNIST 输入范围
+        # ---------------------------------------------
+
         inputs = (
             inputs / 255.0 * 0.99
         ) + 0.01
 
-        # ==============================
+        # ---------------------------------------------
         # 7. 神经网络预测
-        # ==============================
+        # ---------------------------------------------
+
         outputs = network.query(
             inputs
         )
 
-        # ==============================
+        # ---------------------------------------------
         # 8. 得到预测数字
-        # ==============================
+        # ---------------------------------------------
+
         prediction = int(
             np.argmax(outputs)
         )
@@ -261,9 +309,10 @@ def predict():
             prediction
         )
 
-        # ==============================
+        # ---------------------------------------------
         # 9. 返回结果
-        # ==============================
+        # ---------------------------------------------
+
         return jsonify({
             "success": True,
             "prediction": prediction
@@ -282,10 +331,14 @@ def predict():
         }), 500
 
 
+# =========================================================
+# 启动 Flask
+# =========================================================
+
 if __name__ == "__main__":
 
     app.run(
         host="127.0.0.1",
         port=5000,
-        debug=True
+        debug=False
     )
